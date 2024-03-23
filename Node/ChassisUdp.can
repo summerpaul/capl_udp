@@ -1,0 +1,171 @@
+/*@!Encoding:936*/
+includes
+{
+  #include"IPCommon.can"
+
+}
+
+
+// capl 端用于接受VIL控制的数据，向VIL发送底盘数据
+
+variables
+{
+
+
+  
+  dword g_commandPort = 5001;       // 接受控制命令的端口 
+  dword g_chassisPort = 5002;       //发送底盘的端口
+  
+  char g_udpAddrStr[64]  = "127.0.0.1";
+  // PC端发布的控制量，2字节对齐
+  _align(2) struct ControlCmd{
+    char typeCode[2];     // 数据标志位，V C 表示Vehicle To capl
+    word counter;         // 发送计数
+    word comState;        // 通信状态
+    word controlType;     // 00表示不操作 01 表示横向握手，02表示纵向握手，03表示同时握手，04表示解除握手
+    long tar_torque;      // 目标扭矩，除以1000等于真实值
+    long tar_speed;       // 目标速度             除以1000等于真实值
+    long tar_acc;         // 目标加速度           除以1000等于真实值 
+    long tar_brake;       // 目标刹车力度         除以1000等于真实值
+    long tar_gear;        // 目标档位             0,2,3,4
+    long tar_stop_dis;    // 目标刹停距离          mm
+    long emergency_req;   // 目标急刹请求          1/0
+    long driveoff_req;    // 目标起步请求          1/0
+    long standstill_req;  // 目标驻车请求          1/0
+    long tar_steer_angle; // 目标方向盘转角       除以1000等于真实值
+    long tar_steer_speed; // 目标方向盘转速       除以1000等于真实值
+    long tar_eps;         // 目标EPS              -7840 - 7840
+    long tar_fw_angle;    // 目标前轮转角         除以1000等于真实值
+    
+  };
+  
+  struct ControlCmd control_cmd; // 接受的控制数据
+  
+  // 底盘反馈的数据，2字节对齐
+  _align(2) struct StatusResponse{
+    char typeCode[2]; // 数据标志位，C V 表示Capl To Vehicle
+    
+    word counter;
+    word comState;
+    word chassisState; // 00表示未握手，01表示握手成功，02表示异常
+    
+    word veh_gearpos;     // 车身当前档位，0-初始，1-N，2-R，3-D，4-P，15-Error，-1-无效
+    word veh_standstill;  // 车辆当前停止状态 0为运动，1为停止
+    word veh_brake_pedal; // 车辆当前刹车踏板状态，0为空置，1为踩下
+    
+    char wheel_dir[4]; // 车轮转向 0 静止，1 前进，-1 后退
+    
+    long wheel_pulse[4]; // 车轮脉冲信息
+    long wheel_speed[4]; // 车轮轮速信息，精度0.01 km/h
+    
+    long veh_lat_acc;         // 横向加速度，精度0.01 m/s^2
+    long veh_lon_acc;         // 纵向加速度，精度0.01 m/s^2
+    long veh_yawrate;         // 车身横摆角速度信号，精度0.01 deg/sec
+    
+    long veh_t_angle;         // 车辆倾斜角度信号
+    long veh_steer_angle;     // 车身方向盘转角，精度0.0625°
+    long veh_steer_angle_spd; // 车身方向盘转速
+    
+    long veh_torque;          // 车身当前扭矩大小,具体单位视CAN协议决定
+    long veh_velocity;        // 车辆当前速度，具体单位视CAN协议决定
+    
+  };
+  
+  struct StatusResponse response;//发布底盘数据
+  
+  
+  
+ 
+}
+
+
+
+
+//打开UDP端口
+void OpenUdpPort()
+{
+  gUdpSocket = UdpOpen(ipGetAddressAsNumber(g_udpAddrStr), g_commandPort);
+  if(gUdpSocket ==INVALID_SOCKET )
+  {
+    writelineex(0, 1, "Error: could not create Socket !");
+  }
+  else
+  {
+   writelineex(0, 1, "Udp socket is opened successfully.");
+  //接收数据
+   UdpRecv(gUdpSocket);
+    
+  }
+  
+   
+}
+
+void CloseUdpPort()
+{
+  if(gUdpSocket != INVALID_SOCKET)
+  {
+    UdpClose(gUdpSocket);
+    gUdpSocket = INVALID_SOCKET;
+  }
+  
+  
+}
+
+void OnUdpReceiveFrom( dword socket, long result, dword address, dword port, char buffer[], dword count)
+{
+  //write("reveive");
+  memcpy(control_cmd,buffer);
+  UdpRecv(gUdpSocket);
+  response.typeCode[0] = 'C';
+  response.typeCode[1] = 'H';
+  
+  if(control_cmd.comState == 1)
+  {
+    response.comState = 1;
+   
+  }
+ //收到信息就进行发送
+ StatusResponseData();
+  
+  
+}
+
+
+
+
+void StatusResponseData()
+{
+  
+  char data[__size_of(struct StatusResponse)];
+  memcpy(data,response);
+  write(" elcount(data) is %d", elcount(data));
+  
+  if(UdpSendTo(gUdpSocket, IpGetAddressAsNumber(g_udpAddrStr),g_chassisPort, data, elcount(data)) == 0)
+  {
+    writelineex(0, 1, "Successfully sent Udp data.");
+  }
+  else 
+  {
+    writelineex(0,1,"Error: an error occured while connecting to server");
+  }
+  
+  
+  
+}
+
+
+
+
+// 启动初始化
+on start
+{
+  OpenUdpPort();
+
+}
+
+//关闭socket
+
+on stopMeasurement
+{
+  CloseUdpPort();
+}
